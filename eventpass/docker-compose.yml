@@ -1,0 +1,36 @@
+# Runs EventPass behind Caddy, which gets and renews the https certificate for your domain by itself.
+#   1. Point your domain's DNS "A" record at this server.   2. Create .env (see DEPLOY notes / .env.example).   3. docker compose up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_PATH: /data/eventpass.db
+      TRUST_PROXY: "1"                 # exactly one proxy (Caddy) sits in front
+    volumes:
+      - eventpass-data:/data           # the database lives here and survives restarts and updates
+    expose:
+      - "3000"                         # reachable only by Caddy, never directly from the internet
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, for example DOMAIN=events.example.co.tz}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data               # the certificates
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  eventpass-data:
+  caddy-data:
+  caddy-config:

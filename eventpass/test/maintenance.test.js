@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { startTestServer, registerUser } from './helpers.js';
+import { purgeExpired } from '../server/maintenance.js';
+
+test('housekeeping removes only what has expired', async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const { c } = await registerUser(s);
+  const uid = (await s.db.prepare('SELECT id FROM users ORDER BY id DESC').get()).id;
+  const now = Date.now();
+  const q = async (sql, ...a) => await s.db.prepare(sql).run(...a);
+  await q('INSERT INTO oauth_states (state, provider, verifier, nonce, created_at, expires_at) VALUES (?,?,?,?,?,?)', 'old', 'x', 'v', 'n', now - 9e6, now - 1000);
+  await q('INSERT INTO oauth_states (state, provider, verifier, nonce, created_at, expires_at) VALUES (?,?,?,?,?,?)', 'live', 'x', 'v', 'n', now, now + 60000);
+  await q('INSERT INTO mfa_pending (id, user_id, created_at, expires_at) VALUES (?,?,?,?)', 'p-old', uid, now - 9e6, now - 1000);
+  await q('INSERT INTO otp_codes (user_id, purpose, channel, destination, code_hash, created_at, expires_at) VALUES (?,?,?,?,?,?,?)', uid, 'x', 'sms', '+255', 'h', now - 9e6, now - 1000);
+  await q('INSERT INTO email_tokens (token_hash, user_id, purpose, created_at, expires_at) VALUES (?,?,?,?,?)', 'e-old', uid, 'verify', now - 9e6, now - 1000);
+  await q('INSERT INTO sessions (id, public_id, user_id, csrf, created_at, last_seen, expires_at) VALUES (?,?,?,?,?,?,?)', 's-old', 'pub-old', uid, 'c', now - 9e6, now - 9e6, now - 1000);
+  const removed = await purgeExpired(s.ctx);
+  assert.ok(removed >= 5);
+  const n = async (tbl) => (await s.db.prepare(`SELECT COUNT(*) c FROM ${tbl}`).get()).c;
+  assert.equal((await s.db.prepare("SELECT COUNT(*) c FROM oauth_states WHERE state = 'live'").get()).c, 1);
+  assert.equal((await s.db.prepare("SELECT COUNT(*) c FROM oauth_states WHERE state = 'old'").get()).c, 0);
+  assert.equal(await n('mfa_pending'), 0);
+  assert.equal(await n('otp_codes'), 0);
+  assert.equal((await s.db.prepare("SELECT COUNT(*) c FROM email_tokens WHERE token_hash = 'e-old'").get()).c, 0);
+  assert.equal(await n('email_tokens'), 1, 'the live verification link from sign-up is kept');
+  assert.equal((await s.db.prepare("SELECT COUNT(*) c FROM sessions WHERE id = 's-old'").get()).c, 0);
+  assert.equal((await c.get('/api/account')).status, 200, 'the live session is untouched');
+});

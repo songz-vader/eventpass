@@ -1,0 +1,20 @@
+# Render Blueprint: describes the web service so it can be created in one go (New + → Blueprint). Or set the same values by hand in the dashboard.
+# Create the PostgreSQL database first (Neon works well), then paste its connection string as DATABASE_URL.
+services:
+  - type: web
+    name: eventpass
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL          # postgres://… from Neon (or any PostgreSQL)
+        sync: false
+      - key: APP_ENCRYPTION_KEY    # generate with:  npm run keygen   (keep a copy: it protects hosts' saved SMS/WhatsApp keys)
+        sync: false
+      - key: ALLOW_NO_SMTP         # true until you add SMTP_URL; verification links are then printed in the logs
+        value: "true"
+    # APP_URL is optional on Render: it is taken from RENDER_EXTERNAL_URL automatically. Set it only if you use your own domain.
